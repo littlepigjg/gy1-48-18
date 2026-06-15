@@ -7,6 +7,7 @@ import { UIManager } from './ui.js';
 import { ParticleSystem } from './particles.js';
 import { HazardManager } from './hazards.js';
 import { TeleportSystem } from './teleport.js';
+import { InteractionManager } from './interactions.js';
 
 export class Game {
   constructor(canvas) {
@@ -71,6 +72,9 @@ export class Game {
     this.particles.clear();
     this.hazards.clear();
     this.teleport = new TeleportSystem();
+    this.interactions = new InteractionManager();
+    const interactionData = this.world.generateInteractions();
+    this.interactions.loadFromData(interactionData);
     this.stats = { blocksDug: 0, enemiesKilled: 0 };
     this.collapseTimer = 0;
   }
@@ -125,6 +129,10 @@ export class Game {
             this.ui.openShop();
           }
           e.preventDefault();
+          break;
+        case 'e':
+        case 'E':
+          this.interactions.toggleScanner();
           break;
       }
     });
@@ -213,7 +221,8 @@ export class Game {
       this.particles,
       this.baseBuildingX,
       this.hazards,
-      this.teleport
+      this.teleport,
+      this.interactions
     );
 
     this.ui.updateHUD();
@@ -250,6 +259,26 @@ export class Game {
         }
       }
     });
+    this.interactions.update(dt, this.player, this.world, this.particles,
+      (doorX, doorY) => {
+        this.ui.showWarning('🚪 门已打开！', 1500, 'text-cyan-300');
+        this.particles.spawnCircle(
+          doorX * TILE_SIZE + TILE_SIZE / 2,
+          doorY * TILE_SIZE + TILE_SIZE / 2,
+          '#00CED1', 12, 3
+        );
+        this.renderer.shake(1, 0.15);
+      },
+      (trapX, trapY) => {
+        this.ui.showWarning('⚠️ 陷阱触发！', 1500, 'text-red-300');
+        this.particles.spawnCircle(
+          trapX * TILE_SIZE + TILE_SIZE / 2,
+          trapY * TILE_SIZE + TILE_SIZE / 2,
+          '#FF4444', 10, 3
+        );
+        this.renderer.shake(2, 0.2);
+      }
+    );
     this.checkHazards(dt);
     this.checkCollapses(dt);
     this.checkEnemyKills();
@@ -320,11 +349,38 @@ export class Game {
           setTimeout(() => this.triggerCollapse(target.x, target.y), 1000);
         }
 
+        if (result.broke && result.originalType === TILE_TYPES.SUPPORT_PILLAR) {
+          this.ui.showWarning('🪨 支撑柱被破坏！塌方即将来临！', 2500, 'text-orange-300');
+          this.renderer.shake(2, 0.3);
+          const collapseTiles = this.interactions.handlePillarDestroy(target.x, target.y);
+          for (const ct of collapseTiles) {
+            this.hazards.addCollapseWarning(ct.x, ct.y);
+            setTimeout(() => this.triggerCollapse(ct.x, ct.y), 800 + Math.random() * 1200);
+          }
+        }
+
+        if (result.broke && result.originalType === TILE_TYPES.FRAGILE_WALL) {
+          this.ui.showWarning('🧱 脆弱墙壁被击碎！发现隐藏区域！', 2500, 'text-green-300');
+          this.renderer.shake(2, 0.3);
+          this.interactions.handleFragileWallBreak(target.x, target.y);
+          this.particles.spawnCircle(
+            target.x * TILE_SIZE + TILE_SIZE / 2,
+            target.y * TILE_SIZE + TILE_SIZE / 2,
+            '#32CD32', 15, 4
+          );
+        }
+
         this.player.fuel -= this.player.fuelConsumption * 0.5 * dt * 60;
         this.player.addHeat(this.player.heatGeneration * 0.3 * dt * 60);
       }
     } else if (result.tooHard) {
-      this.ui.showWarning('⛏️ 钻头等级不够，无法挖掘此方块！', 1000);
+      const target = this.player.getDigTarget();
+      const tile = this.world.getTile(target.x, target.y);
+      if (tile === TILE_TYPES.DOOR) {
+        this.ui.showWarning('🚪 门无法挖掘，需要找到压力板来打开！', 1500, 'text-yellow-300');
+      } else {
+        this.ui.showWarning('⛏️ 钻头等级不够，无法挖掘此方块！', 1000);
+      }
       this.input.dig = false;
     }
   }

@@ -42,7 +42,7 @@ export class Renderer {
     return { x: sx, y: sy };
   }
 
-  render(dt, world, player, enemies, bullets, particles, baseBuildingX, hazards = null, teleportSystem = null) {
+  render(dt, world, player, enemies, bullets, particles, baseBuildingX, hazards = null, teleportSystem = null, interactions = null) {
     if (this.shakeTime > 0) {
       this.shakeTime -= dt;
       if (this.shakeTime <= 0) this.shakeStrength = 0;
@@ -53,9 +53,12 @@ export class Renderer {
     this.renderSky();
     this.renderBaseBeam(baseBuildingX);
     this.renderBase(baseBuildingX);
-    this.renderWorld(world);
+    this.renderWorld(world, interactions);
     if (hazards) {
       hazards.render(this.ctx, (x, y) => this.worldToScreen(x, y));
+    }
+    if (interactions) {
+      interactions.render(this.ctx, (x, y) => this.worldToScreen(x, y), player.tileX, player.tileY);
     }
     particles.render(this.ctx, (x, y) => this.worldToScreen(x, y));
     this.renderBullets(bullets);
@@ -63,6 +66,9 @@ export class Renderer {
     this.renderPlayer(player, teleportSystem);
     this.renderDarkness(player);
     this.renderBaseArrow(baseBuildingX, player);
+    if (interactions && interactions.scannerActive) {
+      this.renderScannerHUD(interactions);
+    }
   }
 
   renderSky() {
@@ -217,7 +223,7 @@ export class Renderer {
     this.ctx.fillText(`🏭 ${dist}m`, textX, textY);
   }
 
-  renderWorld(world) {
+  renderWorld(world, interactions = null) {
     const startX = Math.max(0, Math.floor(this.camX / TILE_SIZE) - 1);
     const startY = Math.max(0, Math.floor(this.camY / TILE_SIZE) - 1);
     const endX = Math.min(WORLD_WIDTH, Math.ceil((this.camX + this.canvas.width) / TILE_SIZE) + 1);
@@ -227,14 +233,19 @@ export class Renderer {
       for (let x = startX; x < endX; x++) {
         const tile = world.getTile(x, y);
         if (tile === TILE_TYPES.EMPTY) continue;
-        this.renderTile(x, y, tile, world);
+        this.renderTile(x, y, tile, world, interactions);
       }
     }
   }
 
-  renderTile(x, y, tile, world) {
+  renderTile(x, y, tile, world, interactions = null) {
     const colors = TILE_COLORS[tile];
-    if (!colors) return;
+    if (!colors) {
+      if (tile === TILE_TYPES.PRESSURE_PLATE && interactions) {
+        this.renderPressurePlate(x, y, interactions);
+      }
+      return;
+    }
 
     const screen = this.worldToScreen(x * TILE_SIZE, y * TILE_SIZE);
     const colorIdx = ((x * 7 + y * 13) % 3);
@@ -297,6 +308,66 @@ export class Renderer {
       this.ctx.font = 'bold 20px sans-serif';
       this.ctx.textAlign = 'center';
       this.ctx.fillText('!', screen.x + TILE_SIZE / 2, screen.y + TILE_SIZE / 2 + 7);
+    }
+
+    if (tile === TILE_TYPES.SUPPORT_PILLAR) {
+      this.ctx.fillStyle = '#8B6914';
+      this.ctx.fillRect(screen.x + TILE_SIZE * 0.3, screen.y + 2, TILE_SIZE * 0.4, TILE_SIZE - 4);
+      this.ctx.fillStyle = '#CD853F';
+      this.ctx.fillRect(screen.x + TILE_SIZE * 0.25, screen.y + 2, TILE_SIZE * 0.15, TILE_SIZE - 4);
+      this.ctx.fillRect(screen.x + TILE_SIZE * 0.6, screen.y + 2, TILE_SIZE * 0.15, TILE_SIZE - 4);
+
+      this.ctx.fillStyle = '#DEB887';
+      this.ctx.fillRect(screen.x + 4, screen.y + 2, TILE_SIZE - 8, TILE_SIZE * 0.15);
+      this.ctx.fillRect(screen.x + 4, screen.y + TILE_SIZE - TILE_SIZE * 0.15 - 2, TILE_SIZE - 8, TILE_SIZE * 0.15);
+
+      const time = Date.now() * 0.003;
+      const pulse = 0.15 + Math.sin(time + x) * 0.1;
+      this.ctx.fillStyle = `rgba(255, 140, 0, ${pulse})`;
+      this.ctx.fillRect(screen.x, screen.y, TILE_SIZE, TILE_SIZE);
+    }
+
+    if (tile === TILE_TYPES.FRAGILE_WALL) {
+      this.ctx.fillStyle = 'rgba(139, 105, 20, 0.3)';
+      this.ctx.fillRect(screen.x, screen.y, TILE_SIZE, TILE_SIZE);
+
+      this.ctx.strokeStyle = 'rgba(100, 80, 40, 0.8)';
+      this.ctx.lineWidth = 2;
+      this.ctx.beginPath();
+      this.ctx.moveTo(screen.x + 5, screen.y + 5);
+      this.ctx.lineTo(screen.x + TILE_SIZE * 0.6, screen.y + TILE_SIZE * 0.4);
+      this.ctx.lineTo(screen.x + TILE_SIZE - 5, screen.y + TILE_SIZE - 5);
+      this.ctx.moveTo(screen.x + TILE_SIZE * 0.3, screen.y + TILE_SIZE - 5);
+      this.ctx.lineTo(screen.x + TILE_SIZE * 0.6, screen.y + TILE_SIZE * 0.55);
+      this.ctx.moveTo(screen.x + TILE_SIZE - 8, screen.y + 8);
+      this.ctx.lineTo(screen.x + TILE_SIZE * 0.45, screen.y + TILE_SIZE * 0.5);
+      this.ctx.stroke();
+
+      this.ctx.strokeStyle = 'rgba(139, 105, 20, 0.5)';
+      this.ctx.lineWidth = 1;
+      this.ctx.beginPath();
+      this.ctx.moveTo(screen.x + 3, screen.y + TILE_SIZE * 0.3);
+      this.ctx.lineTo(screen.x + TILE_SIZE - 3, screen.y + TILE_SIZE * 0.3);
+      this.ctx.moveTo(screen.x + 3, screen.y + TILE_SIZE * 0.7);
+      this.ctx.lineTo(screen.x + TILE_SIZE - 3, screen.y + TILE_SIZE * 0.7);
+      this.ctx.stroke();
+    }
+
+    if (tile === TILE_TYPES.DOOR) {
+      this.ctx.fillStyle = '#555555';
+      this.ctx.fillRect(screen.x + 2, screen.y + 2, TILE_SIZE - 4, TILE_SIZE - 4);
+
+      this.ctx.fillStyle = '#8B8682';
+      this.ctx.fillRect(screen.x + 5, screen.y + 5, TILE_SIZE - 10, TILE_SIZE - 10);
+
+      this.ctx.fillStyle = '#666666';
+      this.ctx.fillRect(screen.x + TILE_SIZE * 0.3, screen.y + 5, 3, TILE_SIZE - 10);
+      this.ctx.fillRect(screen.x + TILE_SIZE * 0.6, screen.y + 5, 3, TILE_SIZE - 10);
+
+      this.ctx.fillStyle = '#FFD700';
+      this.ctx.beginPath();
+      this.ctx.arc(screen.x + TILE_SIZE * 0.75, screen.y + TILE_SIZE / 2, 3, 0, Math.PI * 2);
+      this.ctx.fill();
     }
 
     const idx = world.getIndex(x, y);
@@ -598,5 +669,60 @@ export class Renderer {
 
     this.ctx.fillStyle = gradient;
     this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+  }
+
+  renderPressurePlate(x, y, interactions) {
+    const screen = this.worldToScreen(x * TILE_SIZE, y * TILE_SIZE);
+    const isActive = interactions.isPlateActive(x, y);
+    const time = Date.now() * 0.003;
+
+    this.ctx.fillStyle = '#3A3A3A';
+    this.ctx.fillRect(screen.x + 4, screen.y + TILE_SIZE - 6, TILE_SIZE - 8, 4);
+
+    const plateHeight = isActive ? 4 : 6;
+    const plateY = isActive ? screen.y + TILE_SIZE - 8 : screen.y + TILE_SIZE - 10;
+    this.ctx.fillStyle = isActive ? '#1E90FF' : '#4169E1';
+    this.ctx.fillRect(screen.x + 6, plateY, TILE_SIZE - 12, plateHeight);
+
+    if (isActive) {
+      this.ctx.shadowColor = '#4169E1';
+      this.ctx.shadowBlur = 10;
+      this.ctx.fillStyle = '#6495ED';
+      this.ctx.fillRect(screen.x + 8, plateY + 1, TILE_SIZE - 16, plateHeight - 2);
+      this.ctx.shadowBlur = 0;
+    } else {
+      const pulse = 0.2 + Math.sin(time + x * 3 + y * 7) * 0.15;
+      this.ctx.fillStyle = `rgba(65, 105, 225, ${pulse})`;
+      this.ctx.fillRect(screen.x + 2, screen.y + TILE_SIZE - 12, TILE_SIZE - 4, 10);
+    }
+  }
+
+  renderScannerHUD(interactions) {
+    const barWidth = 120;
+    const barHeight = 6;
+    const barX = this.canvas.width / 2 - barWidth / 2;
+    const barY = this.canvas.height - 80;
+
+    this.ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+    this.ctx.fillRect(barX - 4, barY - 16, barWidth + 8, barHeight + 24);
+
+    this.ctx.fillStyle = '#00CED1';
+    this.ctx.font = '10px sans-serif';
+    this.ctx.textAlign = 'center';
+    this.ctx.fillText('SCAN', barX + barWidth / 2, barY - 4);
+
+    this.ctx.fillStyle = '#1a1a2e';
+    this.ctx.fillRect(barX, barY, barWidth, barHeight);
+
+    const energyRatio = interactions.scannerEnergy / interactions.scannerMaxEnergy;
+    const gradient = this.ctx.createLinearGradient(barX, 0, barX + barWidth * energyRatio, 0);
+    gradient.addColorStop(0, '#00CED1');
+    gradient.addColorStop(1, '#4169E1');
+    this.ctx.fillStyle = gradient;
+    this.ctx.fillRect(barX, barY, barWidth * energyRatio, barHeight);
+
+    this.ctx.strokeStyle = '#00CED1';
+    this.ctx.lineWidth = 1;
+    this.ctx.strokeRect(barX, barY, barWidth, barHeight);
   }
 }
